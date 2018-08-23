@@ -8,7 +8,7 @@ defmodule Spandex.Strategy.Pdict do
 
   @impl Spandex.Strategy
   def get_trace(tracer) do
-    Process.get({:spandex_trace, tracer})
+    {:ok, Process.get({:spandex_trace, tracer})}
   end
 
   @impl Spandex.Strategy
@@ -20,8 +20,6 @@ defmodule Spandex.Strategy.Pdict do
 
   @impl Spandex.Strategy
   def delete_trace(tracer) do
-    Process.delete({:spandex_trace, tracer})
-
-    :ok
+    {:ok, Process.delete({:spandex_trace, tracer})}
   end
 end

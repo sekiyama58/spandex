@@ -230,7 +230,7 @@ defmodule Spandex.Tracer do
           |> Kernel.||([])
           |> Keyword.merge(opts || [])
           |> Optimal.validate!(@opts)
-          |> Keyword.put(:tracer, __MODULE__)
+          |> Keyword.put(:trace_key, __MODULE__)
 
         if config[:disabled?] do
           :disabled
@@ -252,7 +252,7 @@ defmodule Spandex.Tracer do
 
           opts
           |> Optimal.validate!(schema)
-          |> Keyword.put(:tracer, __MODULE__)
+          |> Keyword.put(:trace_key, __MODULE__)
           |> Keyword.put(:strategy, env[:strategy] || Spandex.Strategy.Pdict)
         end
       end

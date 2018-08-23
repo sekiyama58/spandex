@@ -26,11 +26,16 @@ defmodule Spandex do
   def start_trace(name, opts) do
     strategy = opts[:strategy]
 
-    if strategy.get_trace(opts[:tracer]) do
-      Logger.error("Tried to start a trace over top of another trace.")
-      {:error, :trace_running}
-    else
-      do_start_trace(name, opts)
+    case strategy.get_trace(opts[:trace_key]) do
+      {:ok, nil} ->
+        do_start_trace(name, opts)
+
+      {:ok, _trace} ->
+        _ = Logger.error("Tried to start a trace over top of another trace.")
+        {:error, :trace_running}
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -44,12 +49,15 @@ defmodule Spandex do
   def start_span(name, opts) do
     strategy = opts[:strategy]
 
-    case strategy.get_trace(opts[:tracer]) do
-      nil ->
+    case strategy.get_trace(opts[:trace_key]) do
+      {:error, _} = error ->
+        error
+
+      {:ok, nil} ->
         Logger.error("Tried to start a span without an active trace.")
         {:error, :no_trace_context}
 
-      trace ->
+      {:ok, trace} ->
         do_start_span(name, trace, opts)
     end
   end
@@ -66,17 +74,20 @@ defmodule Spandex do
   def update_span(opts, top?) do
     strategy = opts[:strategy]
 
-    case strategy.get_trace(opts[:tracer]) do
-      nil ->
+    case strategy.get_trace(opts[:trace_key]) do
+      {:ok, nil} ->
         Logger.error("Tried to update a span without an active trace.")
         {:error, :no_trace_context}
 
-      %Trace{stack: []} ->
+      {:ok, %Trace{stack: []}} ->
         Logger.error("Tried to update a span without an active span.")
         {:error, :no_span_context}
 
-      trace ->
+      {:ok, trace} ->
         do_update_span(trace, opts, top?)
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -99,15 +110,18 @@ defmodule Spandex do
   def update_all_spans(opts) do
     strategy = opts[:strategy]
 
-    case strategy.get_trace(opts[:tracer]) do
-      nil ->
+    case strategy.get_trace(opts[:trace_key]) do
+      {:ok, nil} ->
         Logger.error("Tried to update a span without an active trace.")
         {:error, :no_trace_context}
 
-      %Trace{stack: stack, spans: spans} = trace ->
+      {:ok, %Trace{stack: stack, spans: spans} = trace} ->
         new_stack = Enum.map(stack, &update_or_keep(&1, opts))
         new_spans = Enum.map(spans, &update_or_keep(&1, opts))
-        strategy.put_trace(opts[:tracer], %{trace | stack: new_stack, spans: new_spans})
+        strategy.put_trace(opts[:trace_key], %{trace | stack: new_stack, spans: new_spans})
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -122,16 +136,19 @@ defmodule Spandex do
     strategy = opts[:strategy]
     adapter = opts[:adapter]
 
-    case strategy.get_trace(opts[:tracer]) do
-      nil ->
+    case strategy.get_trace(opts[:trace_key]) do
+      {:ok, nil} ->
         Logger.error("Tried to finish a trace without an active trace.")
         {:error, :no_trace_context}
 
-      %Trace{spans: spans, stack: stack} ->
+      {:ok, %Trace{spans: spans, stack: stack}} ->
         unfinished_spans = Enum.map(stack, &ensure_completion_time_set(&1, adapter))
         sender = opts[:sender] || adapter.default_sender()
         sender.send_spans(spans ++ unfinished_spans)
-        strategy.delete_trace(opts[:tracer])
+        strategy.delete_trace(opts[:trace_key])
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -147,19 +164,29 @@ defmodule Spandex do
     strategy = opts[:strategy]
     adapter = opts[:adapter]
 
-    case strategy.get_trace(opts[:tracer]) do
-      nil ->
+    case strategy.get_trace(opts[:trace_key]) do
+      {:ok, nil} ->
         Logger.error("Tried to finish a span without an active trace.")
         {:error, :no_trace_context}
 
-      %Trace{stack: []} ->
+      {:ok, %Trace{stack: []}} ->
         Logger.error("Tried to finish a span without an active span.")
         {:error, :no_span_context}
 
-      %Trace{stack: [span | tail], spans: spans} = trace ->
+      {:ok, %Trace{stack: [span | tail], spans: spans} = trace} ->
         finished_span = ensure_completion_time_set(span, adapter)
-        strategy.put_trace(opts[:tracer], %{trace | stack: tail, spans: [finished_span | spans]})
+
+        _ =
+          strategy.put_trace(opts[:trace_key], %{
+            trace
+            | stack: tail,
+              spans: [finished_span | spans]
+          })
+
         {:ok, finished_span}
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -182,12 +209,17 @@ defmodule Spandex do
   def current_trace_id(opts) do
     strategy = opts[:strategy]
 
-    case strategy.get_trace(opts[:tracer]) do
-      nil ->
+    case strategy.get_trace(opts[:trace_key]) do
+      {:ok, nil} ->
         nil
 
-      %Trace{id: id} ->
+      {:ok, %Trace{id: id}} ->
         id
+
+      {:error, _} ->
+        # TODO: Alter the return type of this interface to allow for returning
+        # errors from fetching the trace.
+        nil
     end
   end
 
@@ -207,10 +239,20 @@ defmodule Spandex do
   def current_span(opts) do
     strategy = opts[:strategy]
 
-    case strategy.get_trace(opts[:tracer]) do
-      nil -> nil
-      %Trace{stack: []} -> nil
-      %Trace{stack: [span | _]} -> span
+    case strategy.get_trace(opts[:trace_key]) do
+      {:ok, nil} ->
+        nil
+
+      {:ok, %Trace{stack: []}} ->
+        nil
+
+      {:ok, %Trace{stack: [span | _]}} ->
+        span
+
+      {:error, _} ->
+        # TODO: Alter the return type of this interface to allow for returning
+        # errors from fetching the trace.
+        nil
     end
   end
 
@@ -225,11 +267,16 @@ defmodule Spandex do
     strategy = opts[:strategy]
     opts = Keyword.put(opts, :parent_id, span_id)
 
-    if strategy.get_trace(opts[:tracer]) do
-      Logger.error("Tried to continue a trace over top of another trace.")
-      {:error, :trace_already_present}
-    else
-      do_continue_trace(name, trace_id, opts)
+    case strategy.get_trace(opts[:trace_key]) do
+      {:ok, nil} ->
+        do_continue_trace(name, trace_id, opts)
+
+      {:ok, _} ->
+        Logger.error("Tried to continue a trace over top of another trace.")
+        {:error, :trace_already_present}
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -243,11 +290,16 @@ defmodule Spandex do
   def continue_trace_from_span(name, span, opts) do
     strategy = opts[:strategy]
 
-    if strategy.get_trace(opts[:tracer]) do
-      Logger.error("Tried to continue a trace over top of another trace.")
-      {:error, :trace_already_present}
-    else
-      do_continue_trace_from_span(name, span, opts)
+    case strategy.get_trace(opts[:trace_key]) do
+      {:ok, nil} ->
+        do_continue_trace_from_span(name, span, opts)
+
+      {:ok, _} ->
+        Logger.error("Tried to continue a trace over top of another trace.")
+        {:error, :trace_already_present}
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -270,7 +322,7 @@ defmodule Spandex do
 
     with {:ok, top_span} <- span(name, opts, trace_id, adapter) do
       trace = %Trace{id: trace_id, stack: [top_span], spans: []}
-      strategy.put_trace(opts[:tracer], trace)
+      strategy.put_trace(opts[:trace_key], trace)
     end
   end
 
@@ -280,7 +332,7 @@ defmodule Spandex do
 
     with {:ok, span} <- Span.child_of(span, name, adapter.span_id(), adapter.now(), opts) do
       trace = %Trace{id: adapter.trace_id(), stack: [span], spans: []}
-      strategy.put_trace(opts[:tracer], trace)
+      strategy.put_trace(opts[:trace_key], trace)
     end
   end
 
@@ -289,7 +341,8 @@ defmodule Spandex do
     adapter = opts[:adapter]
 
     with {:ok, span} <- Span.child_of(current_span, name, adapter.span_id(), adapter.now(), opts),
-         {:ok, _trace} <- strategy.put_trace(opts[:tracer], %{trace | stack: [span | trace.stack]}) do
+         {:ok, _trace} <-
+           strategy.put_trace(opts[:trace_key], %{trace | stack: [span | trace.stack]}) do
       Logger.metadata(span_id: span.id)
       {:ok, span}
     end
@@ -300,7 +353,7 @@ defmodule Spandex do
     adapter = opts[:adapter]
 
     with {:ok, span} <- span(name, opts, trace_id, adapter),
-         {:ok, _trace} <- strategy.put_trace(opts[:tracer], %{trace | stack: [span]}) do
+         {:ok, _trace} <- strategy.put_trace(opts[:trace_key], %{trace | stack: [span]}) do
       Logger.metadata(span_id: span.id)
       {:ok, span}
     end
@@ -314,7 +367,7 @@ defmodule Spandex do
     with {:ok, span} <- span(name, opts, trace_id, adapter) do
       Logger.metadata(trace_id: trace_id, span_id: span.id)
       trace = %Trace{spans: [], stack: [span], id: trace_id}
-      strategy.put_trace(opts[:tracer], trace)
+      strategy.put_trace(opts[:trace_key], trace)
     end
   end
 
@@ -322,7 +375,7 @@ defmodule Spandex do
     strategy = opts[:strategy]
     new_stack = List.update_at(stack, -1, &update_or_keep(&1, opts))
 
-    with {:ok, _trace} <- strategy.put_trace(opts[:tracer], %{trace | stack: new_stack}) do
+    with {:ok, _trace} <- strategy.put_trace(opts[:trace_key], %{trace | stack: new_stack}) do
       {:ok, Enum.at(new_stack, -1)}
     end
   end
@@ -332,7 +385,7 @@ defmodule Spandex do
     updated_span = update_or_keep(current_span, opts)
     new_stack = [updated_span | other_spans]
 
-    with {:ok, _trace} <- strategy.put_trace(opts[:tracer], %{trace | stack: new_stack}) do
+    with {:ok, _trace} <- strategy.put_trace(opts[:trace_key], %{trace | stack: new_stack}) do
       {:ok, updated_span}
     end
   end
