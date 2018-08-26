@@ -27,7 +27,7 @@ defmodule Spandex do
     strategy = opts[:strategy]
 
     if strategy.trace_active?(opts[:trace_key]) do
-      _ = Logger.error("Tried to start a trace over top of another trace.")
+      Logger.error("Tried to start a trace over top of another trace.")
       {:error, :trace_running}
     else
       do_start_trace(name, opts)
@@ -320,7 +320,8 @@ defmodule Spandex do
     adapter = opts[:adapter]
 
     with {:ok, span} <- Span.child_of(current_span, name, adapter.span_id(), adapter.now(), opts),
-         {:ok, _trace} <- strategy.put_trace(opts[:trace_key], %{trace | stack: [span | trace.stack]}) do
+         {:ok, _trace} <-
+           strategy.put_trace(opts[:trace_key], %{trace | stack: [span | trace.stack]}) do
       Logger.metadata(span_id: span.id)
       {:ok, span}
     end
