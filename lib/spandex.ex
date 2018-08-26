@@ -171,12 +171,11 @@ defmodule Spandex do
       {:ok, %Trace{stack: [span | tail], spans: spans} = trace} ->
         finished_span = ensure_completion_time_set(span, adapter)
 
-        _ =
-          strategy.put_trace(opts[:trace_key], %{
-            trace
-            | stack: tail,
-              spans: [finished_span | spans]
-          })
+        strategy.put_trace(opts[:trace_key], %{
+          trace
+          | stack: tail,
+            spans: [finished_span | spans]
+        })
 
         {:ok, finished_span}
 
@@ -320,8 +319,7 @@ defmodule Spandex do
     adapter = opts[:adapter]
 
     with {:ok, span} <- Span.child_of(current_span, name, adapter.span_id(), adapter.now(), opts),
-         {:ok, _trace} <-
-           strategy.put_trace(opts[:trace_key], %{trace | stack: [span | trace.stack]}) do
+         {:ok, _trace} <- strategy.put_trace(opts[:trace_key], %{trace | stack: [span | trace.stack]}) do
       Logger.metadata(span_id: span.id)
       {:ok, span}
     end
