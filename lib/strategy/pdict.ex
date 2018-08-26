@@ -13,7 +13,13 @@ defmodule Spandex.Strategy.Pdict do
 
   @impl Spandex.Strategy
   def get_trace(trace_key) do
-    Process.get({:spandex_trace, trace_key}) || {:error, :no_trace_context}
+    trace = Process.get({:spandex_trace, trace_key})
+
+    if trace do
+      {:ok, trace}
+    else
+      {:error, :no_trace_context}
+    end
   end
 
   @impl Spandex.Strategy
